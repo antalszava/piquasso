@@ -22,6 +22,8 @@ from scipy.linalg import block_diag
 
 from .state import PureFockState
 
+from piquasso._math.fock import FockSpace, FockBasis
+
 from piquasso.api.result import Result
 from piquasso.api.instruction import Instruction
 
@@ -122,6 +124,41 @@ def _get_projected_state_vector(
     return new_state_vector
 
 
+def _calculate_coefficient(
+    state: PureFockState,
+    subsystem_space: FockSpace,
+    basis: FockBasis,
+    matrix: np.ndarray,
+    modes: Tuple[int, ...],
+    auxiliary_modes: Tuple[int, ...],
+) -> float:
+    subsystem_basis_index = subsystem_space.index(basis.on_modes(modes=modes))
+
+    coefficient = 0.0
+
+    for running_vector in state._space:
+        if basis.on_modes(modes=auxiliary_modes) == running_vector.on_modes(
+            modes=auxiliary_modes
+        ):
+
+            subsystem_running_index = subsystem_space.index(
+                running_vector.on_modes(modes=modes)
+            )
+
+            index_on_multimode = state._space.index(running_vector)
+
+            subsystem_matrix_index = (
+                subsystem_basis_index,
+                subsystem_running_index,
+            )
+
+            coefficient += (
+                matrix[subsystem_matrix_index] * state._state_vector[index_on_multimode]
+            )
+
+    return coefficient
+
+
 def _apply_subsystem_representation_to_state(
     state: PureFockState,
     matrix: np.ndarray,
@@ -130,35 +167,17 @@ def _apply_subsystem_representation_to_state(
 ) -> None:
     new_state_vector = np.zeros_like(state._state_vector)
 
-    from piquasso._math.fock import FockSpace
-
     subsystem_space = FockSpace(d=len(modes), cutoff=state._space.cutoff)
 
-    for multimode_index, multimode_vector in enumerate(state._space):
-        single_mode_basis_index = subsystem_space.index(
-            multimode_vector.on_modes(modes=modes)
+    for index, basis in enumerate(state._space):
+        new_state_vector[index] = _calculate_coefficient(
+            state,
+            subsystem_space,
+            basis,
+            matrix,
+            modes,
+            auxiliary_modes,
         )
-
-        for running_vector in state._space:
-            if multimode_vector.on_modes(
-                modes=auxiliary_modes
-            ) == running_vector.on_modes(modes=auxiliary_modes):
-
-                single_mode_running_index = subsystem_space.index(
-                    running_vector.on_modes(modes=modes)
-                )
-
-                index_on_multimode = state._space.index(running_vector)
-
-                single_mode_matrix_index = (
-                    single_mode_basis_index,
-                    single_mode_running_index,
-                )
-
-                new_state_vector[multimode_index] += (
-                    matrix[single_mode_matrix_index]
-                    * state._state_vector[index_on_multimode]
-                )
 
     state._state_vector = new_state_vector
 
