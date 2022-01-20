@@ -15,7 +15,11 @@
 
 from typing import Tuple
 
+import functools
+
 import numpy as np
+
+from scipy.special import comb
 
 
 def get_operator_index(modes: Tuple[int, ...]) -> Tuple[np.ndarray, np.ndarray]:
@@ -37,3 +41,49 @@ def get_auxiliary_operator_index(
     auxiliary_rows = tuple(np.array([modes] * len(auxiliary_modes)).transpose())
 
     return auxiliary_rows, auxiliary_modes
+
+
+@functools.lru_cache()
+def combinations_with_repetition(*, boxes: int, particles: int) -> int:
+    return comb(boxes + particles - 1, particles, exact=True)
+
+
+@functools.lru_cache()
+def get_index_in_particle_subspace(element: Tuple[int, ...]) -> int:
+    boxes = len(element)
+    particles = sum(element)
+
+    if boxes == 1:
+        return 0
+
+    return sum(
+        [
+            combinations_with_repetition(
+                boxes=boxes - 1, particles=particles - particles_in_first_box
+            )
+            for particles_in_first_box in range(element[0])
+        ]
+    ) + get_index_in_particle_subspace(element[1:])
+
+
+@functools.lru_cache()
+def cumulated_combinations_with_repetition(*, boxes: int, cutoff: int) -> int:
+    r"""
+    Calculates the cumulated combinations with repetations up to `cutoff` with the
+    equation
+
+    ..math::
+        \sum_{i=0}^{c - 1} {d + i - 1 \choose i} = {d + c - 1 \choose c - 1}.
+    """
+
+    return comb(boxes + cutoff - 1, cutoff - 1, exact=True)
+
+
+@functools.lru_cache()
+def get_index_in_fock_space(element: Tuple[int, ...]) -> int:
+    boxes = len(element)
+    particles = sum(element)
+
+    return cumulated_combinations_with_repetition(
+        boxes=boxes, cutoff=particles
+    ) + get_index_in_particle_subspace(element)
