@@ -125,15 +125,6 @@ def _get_projected_state_vector(
     return new_state_vector
 
 
-def _merge_basis(basis, modes, auxiliary_basis, auxiliary_modes):
-    new_basis = np.empty((len(modes) + len(auxiliary_modes)), dtype=int)
-
-    new_basis[(modes,)] = basis
-    new_basis[(auxiliary_modes,)] = auxiliary_basis
-
-    return FockBasis(tuple(new_basis))
-
-
 def _calculate_coefficient(
     state: PureFockState,
     basis: FockBasis,
@@ -150,17 +141,15 @@ def _calculate_coefficient(
         cutoff=state._space.cutoff - sum(basis.on_modes(modes=auxiliary_modes)),
     )
 
+    embedded_basis = np.empty((len(modes) + len(auxiliary_modes)), dtype=int)
+    embedded_basis[(auxiliary_modes,)] = basis.on_modes(modes=auxiliary_modes)
+
     for subspace_basis in subspace:
-        embedded_basis = _merge_basis(
-            subspace_basis,
-            modes,
-            basis.on_modes(modes=auxiliary_modes),
-            auxiliary_modes,
-        )
+        embedded_basis[(modes,)] = subspace_basis
 
         subsystem_running_index = get_index_in_fock_space(subspace_basis)
 
-        index_on_multimode = get_index_in_fock_space(embedded_basis)
+        index_on_multimode = get_index_in_fock_space(tuple(embedded_basis))
 
         subsystem_matrix_index = (
             subsystem_basis_index,

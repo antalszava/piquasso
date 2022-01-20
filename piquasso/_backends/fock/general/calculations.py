@@ -20,6 +20,10 @@ import numpy as np
 
 from .state import FockState
 
+from piquasso._math.fock import FockOperatorBasis, FockSpace
+from piquasso._math.indices import get_index_in_fock_space
+
+
 from piquasso.api.instruction import Instruction
 from piquasso.api.result import Result
 
@@ -113,6 +117,80 @@ def _get_projected_density_matrix(
     return new_density_matrix
 
 
+def _calculate_coefficient(
+    state: FockState,
+    basis: FockOperatorBasis,
+    matrix: np.ndarray,
+    modes: Tuple[int, ...],
+    auxiliary_modes: Tuple[int, ...],
+) -> None:
+    subsystem_ket_index = get_index_in_fock_space(basis.ket.on_modes(modes=modes))
+    subsystem_bra_index = get_index_in_fock_space(basis.bra.on_modes(modes=modes))
+
+    ket_subspace = FockSpace(
+        d=len(modes),
+        cutoff=state._space.cutoff - sum(basis.ket.on_modes(modes=auxiliary_modes)),
+    )
+    bra_subspace = FockSpace(
+        d=len(modes),
+        cutoff=state._space.cutoff - sum(basis.bra.on_modes(modes=auxiliary_modes)),
+    )
+
+    ket_embedded_basis = np.empty((len(modes) + len(auxiliary_modes)), dtype=int)
+    ket_embedded_basis[(auxiliary_modes,)] = basis.ket.on_modes(modes=auxiliary_modes)
+
+    bra_embedded_basis = np.empty((len(modes) + len(auxiliary_modes)), dtype=int)
+    bra_embedded_basis[(auxiliary_modes,)] = basis.bra.on_modes(modes=auxiliary_modes)
+
+    coefficient = 0.0 + 0.0j
+
+    for ket_subspace_basis in ket_subspace:
+        for bra_subspace_basis in bra_subspace:
+            subsystem_running_index_ket = get_index_in_fock_space(
+                ket_subspace_basis
+            )
+
+            subsystem_running_index_bra = get_index_in_fock_space(
+                bra_subspace_basis
+            )
+
+            ket_embedded_basis[(modes,)] = ket_subspace_basis
+            bra_embedded_basis[(modes,)] = bra_subspace_basis
+
+            index_on_multimode = (
+                get_index_in_fock_space(tuple(ket_embedded_basis)),
+                get_index_in_fock_space(tuple(bra_embedded_basis)),
+            )
+
+            coefficient += (
+                matrix[subsystem_ket_index, subsystem_running_index_ket]
+                * state._density_matrix[index_on_multimode]
+                * matrix[subsystem_bra_index, subsystem_running_index_bra].conj()
+            )
+
+    return coefficient
+
+
+def _apply_subsystem_representation_to_state(
+    state: FockState,
+    matrix: np.ndarray,
+    modes: Tuple[int, ...],
+    auxiliary_modes: Tuple[int, ...],
+) -> None:
+    new_density_matrix = np.zeros_like(state._density_matrix)
+
+    for multimode_index, multimode_basis in state._space.operator_basis:
+        new_density_matrix[multimode_index] = _calculate_coefficient(
+            state,
+            multimode_basis,
+            matrix,
+            modes,
+            auxiliary_modes,
+        )
+
+    state._density_matrix = new_density_matrix
+
+
 def create(state: FockState, instruction: Instruction, shots: int) -> Result:
     operator = state._space.get_creation_operator(instruction.modes)
 
@@ -157,18 +235,11 @@ def cubic_phase(state: FockState, instruction: Instruction, shots: int) -> Resul
     hbar = state._config.hbar
 
     for index, mode in enumerate(instruction.modes):
-        operator = state._space.get_single_mode_cubic_phase_operator(
+        matrix = state._space.get_single_mode_cubic_phase_operator(
             gamma=gamma[index], hbar=hbar
         )
-        embedded_operator = state._space.embed_matrix(
-            operator,
-            modes=(mode,),
-            auxiliary_modes=state._get_auxiliary_modes(instruction.modes),
-        )
-        state._density_matrix = (
-            embedded_operator
-            @ state._density_matrix
-            @ embedded_operator.conjugate().transpose()
+        _apply_subsystem_representation_to_state(
+            state, matrix, (mode,), state._get_auxiliary_modes((mode,))
         )
 
         state.normalize()
@@ -200,21 +271,13 @@ def displacement(state: FockState, instruction: Instruction, shots: int) -> Resu
     angles = np.angle(instruction._all_params["displacement_vector"])
 
     for index, mode in enumerate(instruction.modes):
-        operator = state._space.get_single_mode_displacement_operator(
+        matrix = state._space.get_single_mode_displacement_operator(
             r=amplitudes[index],
             phi=angles[index],
         )
 
-        embedded_operator = state._space.embed_matrix(
-            operator,
-            modes=(mode,),
-            auxiliary_modes=state._get_auxiliary_modes(instruction.modes),
-        )
-
-        state._density_matrix = (
-            embedded_operator
-            @ state._density_matrix
-            @ embedded_operator.conjugate().transpose()
+        _apply_subsystem_representation_to_state(
+            state, matrix, (mode,), state._get_auxiliary_modes((mode,))
         )
 
         state.normalize()
@@ -227,21 +290,13 @@ def squeezing(state: FockState, instruction: Instruction, shots: int) -> Result:
     angles = np.angle(-np.diag(instruction._all_params["active_block"]))
 
     for index, mode in enumerate(instruction.modes):
-        operator = state._space.get_single_mode_squeezing_operator(
+        matrix = state._space.get_single_mode_squeezing_operator(
             r=amplitudes[index],
             phi=angles[index],
         )
 
-        embedded_operator = state._space.embed_matrix(
-            operator,
-            modes=(mode,),
-            auxiliary_modes=state._get_auxiliary_modes(instruction.modes),
-        )
-
-        state._density_matrix = (
-            embedded_operator
-            @ state._density_matrix
-            @ embedded_operator.conjugate().transpose()
+        _apply_subsystem_representation_to_state(
+            state, matrix, (mode,), state._get_auxiliary_modes((mode,))
         )
 
         state.normalize()
