@@ -23,6 +23,7 @@ from scipy.linalg import block_diag
 from .state import PureFockState
 
 from piquasso._math.fock import FockSpace, FockBasis
+from piquasso._math.indices import get_index_in_fock_space
 
 from piquasso.api.result import Result
 from piquasso.api.instruction import Instruction
@@ -124,37 +125,51 @@ def _get_projected_state_vector(
     return new_state_vector
 
 
+def _merge_basis(basis, modes, auxiliary_basis, auxiliary_modes):
+    new_basis = np.empty((len(modes) + len(auxiliary_modes)), dtype=int)
+
+    new_basis[(modes,)] = basis
+    new_basis[(auxiliary_modes,)] = auxiliary_basis
+
+    return FockBasis(tuple(new_basis))
+
+
 def _calculate_coefficient(
     state: PureFockState,
-    subsystem_space: FockSpace,
     basis: FockBasis,
     matrix: np.ndarray,
     modes: Tuple[int, ...],
     auxiliary_modes: Tuple[int, ...],
 ) -> float:
-    subsystem_basis_index = subsystem_space.index(basis.on_modes(modes=modes))
+    subsystem_basis_index = get_index_in_fock_space(basis.on_modes(modes=modes))
 
     coefficient = 0.0
 
-    for running_vector in state._space:
-        if basis.on_modes(modes=auxiliary_modes) == running_vector.on_modes(
-            modes=auxiliary_modes
-        ):
+    subspace = FockSpace(
+        d=len(modes),
+        cutoff=state._space.cutoff - sum(basis.on_modes(modes=auxiliary_modes)),
+    )
 
-            subsystem_running_index = subsystem_space.index(
-                running_vector.on_modes(modes=modes)
-            )
+    for subspace_basis in subspace:
+        embedded_basis = _merge_basis(
+            subspace_basis,
+            modes,
+            basis.on_modes(modes=auxiliary_modes),
+            auxiliary_modes,
+        )
 
-            index_on_multimode = state._space.index(running_vector)
+        subsystem_running_index = get_index_in_fock_space(subspace_basis)
 
-            subsystem_matrix_index = (
-                subsystem_basis_index,
-                subsystem_running_index,
-            )
+        index_on_multimode = get_index_in_fock_space(embedded_basis)
 
-            coefficient += (
-                matrix[subsystem_matrix_index] * state._state_vector[index_on_multimode]
-            )
+        subsystem_matrix_index = (
+            subsystem_basis_index,
+            subsystem_running_index,
+        )
+
+        coefficient += (
+            matrix[subsystem_matrix_index] * state._state_vector[index_on_multimode]
+        )
 
     return coefficient
 
@@ -167,12 +182,9 @@ def _apply_subsystem_representation_to_state(
 ) -> None:
     new_state_vector = np.zeros_like(state._state_vector)
 
-    subsystem_space = FockSpace(d=len(modes), cutoff=state._space.cutoff)
-
     for index, basis in enumerate(state._space):
         new_state_vector[index] = _calculate_coefficient(
             state,
-            subsystem_space,
             basis,
             matrix,
             modes,
